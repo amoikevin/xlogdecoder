@@ -30,40 +30,15 @@ namespace Tencent.Mars
 
         private static ushort lastseq;
 
-        private static void Decrypt(ref byte[] v, int offset, in byte[] k)
-        {
-            const uint delta = 0x9E3779B9U;
-            const uint op = 0xFFFFFFFFU;
-            var sum = 0xE3779B90U;
-
-            var v0 = ToUInt32(in v, offset);
-            var v1 = ToUInt32(in v, offset + 4);
-
-            var k0 = ToUInt32(in k);
-            var k1 = ToUInt32(in k, 4);
-            var k2 = ToUInt32(in k, 8);
-            var k3 = ToUInt32(in k, 12);
-
-            for (var i = 0; i < 32; i++)
-            {
-                v1 = (v1 - (((v0 << 4) + k2) ^ (v0 + sum) ^ ((v0 >> 5) + k3))) & op;
-                v0 = (v0 - (((v1 << 4) + k0) ^ (v1 + sum) ^ ((v1 >> 5) + k1))) & op;
-                sum = (sum - delta) & op;
-            }
-
-            Set(ref v, v0, offset);
-            Set(ref v, v1, offset + 4);
-        }
-
-        private static int DecodeBuffer(ref byte[] buffer, int offset, BinaryWriter output)
+        private static int DecodeBuffer(byte[] buffer, int offset, BinaryWriter output)
         {
             if (offset >= buffer.Length) return -1;
 
-            var ret = IsGoodLogBuffer(in buffer, offset, 1);
+            var ret = IsGoodLogBuffer(buffer, offset, 1);
             if (!ret.Item1)
             {
-                var temp = Copy(in buffer, offset, buffer.Length - offset);
-                var fixpos = GetLogStartPos(in temp, offset, 1);
+                var temp = Copy(buffer, offset, buffer.Length - offset);
+                var fixpos = GetLogStartPos(temp, offset, 1);
                 if (-1 == fixpos)
                     return -1;
                 output.Write($"[F]decode_log_file.py decode error len={fixpos}, result:{ret.Item2}\n");
@@ -91,10 +66,10 @@ namespace Tencent.Mars
 
             var headerLen = 1 + 2 + 1 + 1 + 4 + cryptKeyLen;
             var bodyOffset = offset + headerLen;
-            var length = ToInt32(in buffer, bodyOffset - 4 - cryptKeyLen);
+            var length = ToInt32(buffer, bodyOffset - 4 - cryptKeyLen);
             var nextOffset = bodyOffset + length;
 
-            var seq = ToUInt16(in buffer, bodyOffset - 4 - cryptKeyLen - 2 - 2);
+            var seq = ToUInt16(buffer, bodyOffset - 4 - cryptKeyLen - 2 - 2);
 
             if (seq != 0 && seq != 1 && lastseq != 0 && seq != lastseq + 1)
                 output.Write($"[F]decode_log_file.py log seq:{lastseq + 1}-{seq - 1} is missing\n");
@@ -105,14 +80,14 @@ namespace Tencent.Mars
             //            var beginHour = (char) buffer[headerOffset - 4 - cryptKeyLen - 1 - 1];
             //            var endHour = (char) buffer[headerOffset - 4 - cryptKeyLen - 1];
 
-            
+
             try
             {
                 switch (buffer[offset])
                 {
                     case MAGIC_COMPRESS_START:
                     case MAGIC_COMPRESS_NO_CRYPT_START:
-                        using (var src = new MemoryStream(buffer,bodyOffset,length))
+                        using (var src = new MemoryStream(buffer, bodyOffset, length))
                         using (var deflate = new DeflateStream(src, CompressionMode.Decompress, false))
                         {
                             deflate.CopyTo(output.BaseStream);
@@ -126,7 +101,7 @@ namespace Tencent.Mars
                             var left = length;
                             while (left > 0)
                             {
-                                var singleLogLen = ToUInt16(in buffer, index);
+                                var singleLogLen = ToUInt16(buffer, index);
                                 src.Write(buffer, index + 2, singleLogLen);
                                 var span = singleLogLen + 2;
                                 index += span;
@@ -145,9 +120,9 @@ namespace Tencent.Mars
 
                         var k = new byte[4];
                         var num = length / (8 * 8);
-                        for (var i = 0; i < num; i++) Decrypt(ref buffer, num, in k);
+                        for (var i = 0; i < num; i++) Decrypt(buffer, num, k);
 
-                        using (var src = new MemoryStream(buffer,bodyOffset,length))
+                        using (var src = new MemoryStream(buffer, bodyOffset, length))
                         using (var deflate = new DeflateStream(src, CompressionMode.Decompress, false))
                         {
                             deflate.CopyTo(output.BaseStream);
@@ -167,7 +142,32 @@ namespace Tencent.Mars
             return nextOffset + 1;
         }
 
-        private static int GetLogStartPos(in byte[] buffer, int offset, int count)
+        private static void Decrypt(byte[] v, int offset, byte[] k)
+        {
+            const uint delta = 0x9E3779B9U;
+            const uint op = 0xFFFFFFFFU;
+            var sum = 0xE3779B90U;
+
+            var v0 = ToUInt32(v, offset);
+            var v1 = ToUInt32(v, offset + 4);
+
+            var k0 = ToUInt32(k);
+            var k1 = ToUInt32(k, 4);
+            var k2 = ToUInt32(k, 8);
+            var k3 = ToUInt32(k, 12);
+
+            for (var i = 0; i < 32; i++)
+            {
+                v1 = (v1 - (((v0 << 4) + k2) ^ (v0 + sum) ^ ((v0 >> 5) + k3))) & op;
+                v0 = (v0 - (((v1 << 4) + k0) ^ (v1 + sum) ^ ((v1 >> 5) + k1))) & op;
+                sum = (sum - delta) & op;
+            }
+
+            Set(v, v0, offset);
+            Set(v, v1, offset + 4);
+        }
+
+        private static int GetLogStartPos(byte[] buffer, int offset, int count)
         {
             while (offset < buffer.Length)
             {
@@ -178,7 +178,7 @@ namespace Tencent.Mars
                      MAGIC_COMPRESS_START2 == buffer[offset] ||
                      MAGIC_COMPRESS_NO_CRYPT_START == buffer[offset] ||
                      MAGIC_NO_COMPRESS_NO_CRYPT_START == buffer[offset]) &&
-                    IsGoodLogBuffer(in buffer, offset, count).Item1)
+                    IsGoodLogBuffer(buffer, offset, count).Item1)
                     return offset;
                 ++offset;
             }
@@ -187,7 +187,7 @@ namespace Tencent.Mars
         }
 
 
-        private static (bool, string) IsGoodLogBuffer(in byte[] buffer, int offset, int count)
+        private static (bool, string) IsGoodLogBuffer(byte[] buffer, int offset, int count)
         {
             if (offset == buffer.Length) return (true, "");
 
@@ -214,7 +214,7 @@ namespace Tencent.Mars
             if (bodyOffset + 1 + 1 > buffer.Length)
                 return (false, $"offset:{offset} > len(buffer):{buffer.Length}");
 
-            var length = ToInt32(in buffer, bodyOffset - 4 - cryptKeyLen);
+            var length = ToInt32(buffer, bodyOffset - 4 - cryptKeyLen);
             var nextOffset = bodyOffset + length;
 
             if (nextOffset + 1 > buffer.Length)
@@ -228,19 +228,19 @@ namespace Tencent.Mars
 
             return 1 >= count
                 ? (true, "")
-                : IsGoodLogBuffer(in buffer, nextOffset + 1, count - 1);
+                : IsGoodLogBuffer(buffer, nextOffset + 1, count - 1);
         }
 
         public static void ParseFile(string input, string output)
         {
             var buffer = File.ReadAllBytes(input);
-            var startPos = GetLogStartPos(in buffer, 0, 2);
+            var startPos = GetLogStartPos(buffer, 0, 2);
             if (-1 == startPos)
                 return;
 
             using (var writer = new BinaryWriter(File.OpenWrite(output)))
             {
-                while ((startPos = DecodeBuffer(ref buffer, startPos, writer)) != -1)
+                while ((startPos = DecodeBuffer(buffer, startPos, writer)) != -1)
                 {
                 }
             }
@@ -249,14 +249,14 @@ namespace Tencent.Mars
         #region Bytes Ext
 
         [MethodImpl(AggressiveInlining)]
-        public static ushort ToUInt16(in byte[] buffer, int index = 0)
+        public static ushort ToUInt16(this byte[] buffer, int index = 0)
         {
             return (ushort) ((buffer[index + 1] << 8) |
                              buffer[index]);
         }
 
         [MethodImpl(AggressiveInlining)]
-        public static int ToInt32(in byte[] buffer, int index = 0)
+        public static int ToInt32(this byte[] buffer, int index = 0)
         {
             return (buffer[index + 3] << 24) |
                    (buffer[index + 2] << 16) |
@@ -265,7 +265,7 @@ namespace Tencent.Mars
         }
 
         [MethodImpl(AggressiveInlining)]
-        public static uint ToUInt32(in byte[] buffer, int index = 0)
+        public static uint ToUInt32(this byte[] buffer, int index = 0)
         {
             return (uint) ((buffer[index + 3] << 24) |
                            (buffer[index + 2] << 16) |
@@ -275,7 +275,7 @@ namespace Tencent.Mars
 
 
         [MethodImpl(AggressiveInlining)]
-        public static void Set(ref byte[] bytes, uint value, int index = 0)
+        public static void Set(this byte[] bytes, uint value, int index = 0)
         {
             bytes[index] = (byte) (value & 0xFF);
             bytes[index + 1] = (byte) ((value >> 8) & 0xFF);
@@ -284,7 +284,7 @@ namespace Tencent.Mars
         }
 
         [MethodImpl(AggressiveInlining)]
-        public static T[] Copy<T>(in T[] src, int index, int length)
+        public static T[] Copy<T>(this T[] src, int index, int length)
         {
             var dest = new T[length];
             Array.Copy(src, index, dest, 0, length);
